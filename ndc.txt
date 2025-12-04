@@ -1,0 +1,2370 @@
+====================================================================
+PORT FORWARDING 
+============================================================
+
+→ When a request comes from WAN (NAT IP),
+→ Router/firewall checks PREROUTING chain first
+→ PREROUTING allows us to change the destination IP
+→ This is called DNAT (Destination NAT)
+
+============================================================
+2) PORT FORWARDING TO CLIENT 1 (PORT 80)
+
+Client 1:
+→ Webserver running on 192.168.20.5:80
+(This is shown in PDF page 1)
+
+
+Untitled document (4)
+
+We want:
+→ Base machine (host PC) to open:
+http://<firewall NAT IP>:80
+→ It should reach client 1’s webserver.
+
+Add DNAT rule in PREROUTING:
+
+Command:
+sudo iptables -t nat -A PREROUTING -i ens160 -p tcp --dport 80 -j DNAT --to-destination 192.168.20.5:80
+
+
+Untitled document (4)
+
+Now check PREROUTING table:
+sudo iptables -t nat -L
+
+Test:
+→ Open browser on base machine
+→ Type: <NAT IP>:80
+→ You should see Client 1 webpage
+
+============================================================
+3) WHY DO WE NEED A SECOND PORT FOR CLIENT 2?
+
+Port 80 is already used by Client 1.
+
+So if we want Client 2 to also have a webserver:
+→ We must use a different port on WAN side
+→ Choose port 81 for Client 2
+(As mentioned on page 1 bottom)
+
+
+Untitled document (4)
+
+============================================================
+4) PORT FORWARDING TO CLIENT 2 (PORT 81 → 80)
+
+Client 2 webserver:
+192.168.20.10:80
+
+Add rule:
+
+Command:
+sudo iptables -t nat -A PREROUTING -p tcp -i ens160 --dport 81 -j DNAT --to-destination 192.168.20.10:80
+
+
+Untitled document (4)
+
+Test:
+→ Open base machine browser
+→ Type: <NAT IP>:81
+→ This should display Client 2’s webserver.
+
+============================================================
+5) FINAL RESULT
+
+Client 1 website:
+→ http://<NAT IP>:80
+(forwarded to 192.168.20.5:80)
+
+Client 2 website:
+→ http://<NAT IP>:81
+(forwarded to 192.168.20.10:80)
+
+Both webservers can run at the same time
+because they use different external ports.
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+========================================================================================
+
+====================================================================
+SQUID PROXY 
+
+============================================================
+
+SQUID PROXY BASICS (from PDF page 1)
+============================================================
+
+Squid proxy works on port: 3128
+
+
+Untitled document (3)
+
+Squid firewall → works up to Application Layer
+(Shown in diagram on page 1)
+
+ACL TYPES supported:
+→ src = source IP
+→ dst = destination IP
+→ srcdomain = source domain
+→ dstdomain = destination domain
+→ url_regex = URL content
+→ time = time-based blocking
+
+
+Untitled document (3)
+
+Basic ACL format:
+acl <name> <type> <value>
+
+Examples:
+acl client1 src 192.168.20.5
+acl mynet src 192.168.20.0/24
+
+
+Untitled document (3)
+
+Apply ACL:
+acl microsoft dstdomain microsoft.com
+http_access deny microsoft client1
+
+
+Untitled document (3)
+
+============================================================
+2) IMPORTANT SQUID RULE ORDER (from PDF page 2)
+
+NOTE:
+→ Squid works ONLY for HTTP/Web traffic
+
+
+Untitled document (3)
+
+RULE ORDER:
+
+Allow rules must be written FIRST
+
+Block rules AFTER allow rules
+
+If you want:
+→ Allow few → Block remaining
+OR
+→ Block few → Allow remaining
+
+
+Untitled document (3)
+
+============================================================
+3) INSTALL SQUID PROXY
+
+Install:
+sudo dnf install squid -y
+(or yum/apt as applicable)
+
+
+Untitled document (3)
+
+Add INPUT rule for squid:
+sudo iptables -I INPUT 1 -s 192.168.20.0/24 -p tcp --dport 3128 -j ACCEPT
+
+
+Untitled document (3)
+
+Squid cache directory:
+Location → /var/spool/squid
+
+
+Untitled document (3)
+
+Open squid config:
+sudo nano /etc/squid/squid.conf
+
+============================================================
+4) EDIT SQUID CONFIG (from PDF page 3)
+
+Uncomment disk cache line:
+
+Uncomment the directory line shown inside config
+
+Untitled document (3)
+
+Squid cache structure:
+→ var/spool/squid
+→ 16 directories × each having 256 subdirs
+
+Set visible hostname:
+visible_hostname proxy.boss.error
+
+
+Untitled document (3)
+
+Start squid:
+sudo systemctl start squid
+sudo systemctl enable squid
+
+Check folders:
+ls /var/spool/squid
+→ You will see multiple directories (as shown on page 3)
+
+
+Untitled document (3)
+
+============================================================
+5) CONFIGURE CLIENT FOR PROXY (page 3)
+
+Client1:
+sudo nmtui
+→ Remove default gateway
+→ Remove DNS entries
+
+Browser Settings → Search “proxy” → Manual Proxy
+→ HTTP proxy = Firewall machine IP
+→ Port = 3128
+→ Enable checkbox
+→ OK
+
+
+Untitled document (3)
+
+============================================================
+6) ADDING RULES IN SQUID (page 4)
+
+Open squid config:
+sudo vi /etc/squid/squid.conf
+
+Add ACLs (from PDF highlighted section):
+acl mynet src 192.168.20.0/24
+acl client1 src 192.168.20.5
+acl client2 src 192.168.20.10
+acl google dstdomain .google.com
+acl microsoft dstdomain .microsoft.com
+acl redhat dstdomain .redhat.com
+
+
+Untitled document (3)
+
+Allow specific websites:
+http_access allow google mynet
+http_access allow microsoft client1
+http_access allow redhat client2
+
+Block everything else:
+http_access deny mynet
+
+
+Untitled document (3)
+
+============================================================
+7) RELOAD VS RESTART (IMPORTANT)
+
+Reload:
+sudo systemctl reload squid.service
+→ reload = apply changes without stopping service
+
+Restart:
+→ restart = stops and starts squid (not recommended)
+
+
+Untitled document (3)
+
+============================================================
+8) TESTING RESULT (from PDF images)
+
+If allowed sites:
+→ google.com, microsoft.com, redhat.com
+will open normally
+(see screenshots page 4)
+
+If blocked:
+→ user gets “proxy server is refusing connections”
+shown on last page
+
+
+Untitled document (3)
+
+============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+========================================================================================
+====================================================================
+FAIL2BAN – DETAILED NOTEPAD VERSION
+
+============================================================
+
+WHY FAIL2BAN IS USED (PDF explanation)
+============================================================
+
+→ Client1 tries SSH on firewall
+→ Enters wrong password repeatedly
+→ Possible brute-force / dictionary attack
+
+
+Untitled document (5)
+
+Fail2ban works like this:
+→ If wrong password entered 3 times → ban for 10 minutes
+→ After 10 minutes, if he tries again → ban increases (ex: 20 min)
+→ Helps block attackers automatically
+
+============================================================
+2) INSTALL FAIL2BAN
+
+sudo dnf update -y
+sudo dnf install epel-release -y
+sudo dnf update -y
+sudo dnf install fail2ban -y
+
+
+Untitled document (5)
+
+============================================================
+3) CREATE FAIL2BAN LOCAL CONFIG FILES
+
+Copy main config:
+sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+
+
+Untitled document (5)
+
+Create SSH-specific jail rule:
+sudo vim /etc/fail2ban/jail.d/sshd.local
+
+Add the following inside file:
+
+[sshd]
+enabled = true
+findtime = 3600
+maxretry = 3
+bantime = 10m
+
+Explanation:
+→ findtime = 1 hour (time window to count failures)
+→ maxretry = 3 wrong passwords allowed
+→ bantime = ban for 10 minutes
+
+
+Untitled document (5)
+
+============================================================
+4) START FAIL2BAN SERVICE
+
+sudo systemctl start fail2ban
+sudo systemctl enable fail2ban
+
+
+Untitled document (5)
+
+Fail2ban is now active and protecting SSH.
+
+============================================================
+5) TEST FAIL2BAN
+
+From another client (ex: Client2):
+→ Try to SSH into Firewall
+→ Enter wrong password 3 times
+
+Fail2ban will:
+→ Immediately block client IP
+→ Ban lasts 10 minutes
+
+============================================================
+6) CHECK FAIL2BAN STATUS
+
+List all jails:
+sudo fail2ban-client status
+
+
+Untitled document (5)
+
+See specific jail:
+sudo fail2ban-client status sshd
+
+============================================================
+7) DEFAULT BAN TIME (from PDF)
+
+Default bantime = 10 minutes
+
+
+Untitled document (5)
+
+============================================================
+8) HOW TO UNBAN AN IP (VERY IMPORTANT)
+
+sudo fail2ban-client set sshd unbanip 192.168.20.5
+
+
+Untitled document (5)
+
+After unban:
+→ Client can attempt SSH again
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+========================================================================================
+====================================================================
+DMZ NETWORK SETUP – DETAILED STEPS
+
+
+============================================================
+
+UNDERSTANDING DMZ (from page 1 image)
+============================================================
+
+DMZ = “Demilitarized Zone”
+→ Area between WAN (internet) and LAN
+→ Public-facing servers (web, ftp) stay in DMZ
+→ Internal LAN servers stay protected behind firewall
+
+Diagram on PDF page 1 shows:
+WAN → Firewall → DMZ → LAN
+
+
+Untitled document (2)
+
+============================================================
+2) CREATE DMZ NETWORK IN VMWARE
+
+Step 1:
+VMware → Edit → Virtual Network Editor → Change Settings → Yes
+
+Step 2:
+Add Network → vmnet2 → OK → Apply → OK
+→ Set this network to 192.168.50.0 network
+
+
+Untitled document (2)
+
+This vmnet2 is your DMZ network.
+
+============================================================
+3) CONFIGURE VM ADAPTERS (from page 2 images)
+
+Firewall VM:
+→ Add Adapter → Custom → vmnet2 (DMZ interface)
+
+Client 1 (LAN):
+→ Adapter: vmnet1 or host-only (192.168.20.x network)
+
+Client 2 (DMZ):
+→ Adapter: vmnet2 (192.168.50.x network)
+
+
+Untitled document (2)
+
+Overall setup (page 2 diagram):
+Firewall
+→ ens160 = external network (NAT)
+→ ens192 = LAN (192.168.20.0/24)
+→ ens256 = DMZ (192.168.50.0/24)
+
+============================================================
+4) ASSIGN IP ADDRESSES USING nmtui
+
+On Client 1 (LAN):
+sudo nmtui
+→ IPv4 Manual
+→ Address: 192.168.20.10/24
+→ Gateway: 192.168.20.5
+→ DNS: 192.168.72.20
+
+
+Untitled document (2)
+
+Check:
+ip -br a
+
+On Client 2 (DMZ):
+sudo nmtui
+→ IPv4 Manual
+→ Address: 192.168.50.10/24
+→ Gateway: 192.168.50.5
+→ DNS: 192.168.72.20
+
+
+Untitled document (2)
+
+Firewall interface IPs (page 4):
+ens160 → external
+ens192 → 192.168.20.5
+ens256 → 192.168.50.5
+
+
+Untitled document (2)
+
+============================================================
+5) IPTABLES RULES ON FIREWALL
+============================================================
+5.1 NAT MASQUERADING (Internet Access)
+
+For Client 1 (LAN 192.168.20.0/24):
+sudo iptables -t nat -A POSTROUTING -o ens160 -s 192.168.20.0/24 -j MASQUERADE
+
+
+Untitled document (2)
+
+For Client 2 (DMZ 192.168.50.0/24):
+sudo iptables -t nat -A POSTROUTING -o ens160 -s 192.168.50.0/24 -j MASQUERADE
+
+
+Untitled document (2)
+
+============================================================
+5.2 DNS ALLOW RULES FOR BOTH CLIENTS
+
+For LAN:
+sudo iptables -I FORWARD 1 -s 192.168.20.0/24 -d 192.168.72.20 -p udp --dport 53 -j ACCEPT
+sudo iptables -I FORWARD 2 -d 192.168.20.0/24 -s 192.168.72.20 -p udp --sport 53 -j ACCEPT
+
+
+Untitled document (2)
+
+For DMZ:
+sudo iptables -I FORWARD 1 -s 192.168.50.0/24 -d 192.168.72.20 -p udp --dport 53 -j ACCEPT
+sudo iptables -I FORWARD 2 -d 192.168.50.0/24 -s 192.168.72.20 -p udp --sport 53 -j ACCEPT
+
+
+Untitled document (2)
+
+============================================================
+5.3 ALLOW DMZ CLIENT TO ACCESS HTTPS WEBSITES
+
+sudo iptables -I FORWARD 3 -s 192.168.50.0/24 -p tcp --dport 443 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -I FORWARD 4 -d 192.168.50.0/24 -p tcp --sport 443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+
+Untitled document (2)
+
+Result → DMZ client can access browser now.
+
+============================================================
+6) PORT FORWARDING (DNAT) FROM WAN → DMZ WEB SERVER
+
+Scenario:
+→ DMZ web server at 192.168.50.10 should be reachable from WAN
+
+Add rules:
+
+Forward HTTP traffic:
+sudo iptables -t nat -A PREROUTING -i ens160 -p tcp --dport 80 -j DNAT --to-destination 192.168.50.10:80
+
+Allow traffic towards DMZ:
+sudo iptables -I FORWARD 1 -d 192.168.50.10 -p tcp --dport 80 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+
+Allow traffic coming back:
+sudo iptables -I FORWARD 2 -s 192.168.50.10 -p tcp --sport 80 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+
+Untitled document (2)
+
+Now:
+→ Your base machine can open the website using firewall WAN IP.
+
+============================================================
+7) SSH FROM LAN TO DMZ
+
+ON FIREWALL:
+Allow LAN → DMZ SSH:
+sudo iptables -I FORWARD 1 -s 192.168.20.10 -d 192.168.50.10 -p tcp --dport 22 -j ACCEPT
+sudo iptables -I FORWARD 2 -d 192.168.20.10 -s 192.168.50.10 -p tcp --sport 22 -j ACCEPT
+
+
+Untitled document (2)
+
+ON DMZ CLIENT (Client 2):
+Enable SSH on firewall:
+sudo firewall-cmd --add-service=ssh --permanent
+sudo firewall-cmd --reload
+
+ON LAN CLIENT (Client 1):
+ssh 192.168.50.10
+or
+ssh boss@192.168.50.10
+
+
+Untitled document (2)
+
+============================================================
+8) USEFUL COMMANDS
+
+List forwarding rules:
+sudo iptables -L FORWARD -n --line-numbers
+
+Check interfaces:
+ip -br a
+
+Restart network:
+sudo systemctl restart NetworkManager
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+======================================================================================
+
+====================================================================
+SURICATA ON PFSENSE (DETAILED STEPS)
+
+
+============================================================
+
+INSTALL SURICATA
+============================================================
+
+Go to:
+System → Package Manager → Available Packages → Search "suricata" → Install
+
+Wait for installation to finish.
+
+============================================================
+2) BASIC SURICATA GLOBAL SETTINGS
+
+Go to:
+Services → Suricata → Global Settings
+
+Enable the first checkbox:
+→ "Enable Global Logging" (or similar depending on version)
+
+Next:
+Enable:
+→ Blacklist
+→ ET/Open or ETOpen/FIDO ruleset
+
+Set update frequency:
+→ 6 hours
+
+Click Save.
+
+Now go to:
+Updates tab → Click "Update"
+Wait for all rule sets to download.
+
+============================================================
+3) IMPORTANT SYSTEM TUNING (VERY IMPORTANT)
+
+Go to:
+System → Advanced → Networking
+
+Enable the first 3 checkboxes:
+→ Hardware Checksum Offloading
+→ Hardware TCP Segmentation Offloading
+→ Hardware Large Receive Offloading
+
+Scroll → Save
+
+Reboot pfSense:
+System → Reboot
+
+============================================================
+4) ADD SURICATA TO WAN INTERFACE
+
+Go to:
+Services → Suricata → Interfaces → Add
+
+Add interface:
+→ Interface: WAN
+Save
+
+Select newly added WAN:
+Services → Suricata → Interfaces → WAN
+
+Below section:
+→ WAN Rule Category → Choose "Custom Rules" (if shown)
+
+Now add a custom rule.
+
+============================================================
+5) ADD CUSTOM ALERT RULES
+
+Go to:
+Services → Suricata → Interfaces → WAN → Scroll to "Custom Rules" section → Edit
+
+Add rule:
+
+alert icmp any any -> 8.8.8.8 any (msg:"ping to google bhai"; sid:10000001; rev:0001;)
+
+Example FTP rule:
+alert tcp any any -> any 21 (msg:"FTP marala hana yala"; sid:2222222; rev:1;)
+
+Save changes.
+
+Now test alerts.
+
+============================================================
+6) TEST ALERT GENERATION
+
+On client:
+ping 8.8.8.8
+Or test FTP:
+ftp 192.168.x.x or any FTP server
+
+Then on pfSense:
+Services → Suricata → Logs → Alerts Tab
+
+→ You should see alerts listed.
+If alerts appear → Suricata ALERT mode is working.
+
+============================================================
+7) ENABLE BLOCKING MODE (IPS MODE)
+
+To turn Suricata from ALERT → BLOCK:
+
+Go to:
+Services → Suricata → Interfaces → WAN → Edit
+
+Scroll down:
+Find: "Block Offenders" or "IPS Mode"
+→ Check ✔ (Enable Blocking)
+
+Scroll → Save
+
+Now Suricata will drop/block packets that match rules.
+
+============================================================
+8) TEST BLOCKING
+
+From client, try:
+ftp <ftp-server-ip>
+or ping 8.8.8.8 (if rule is for ICMP)
+
+Then check in pfSense:
+Services → Suricata → Logs → Blocks Tab
+
+→ Block entry should appear.
+This confirms Suricata IPS is working.
+
+============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================================
+PFSENSE FIREWALL – DETAILED STEPS
+CLEAN NOTEPAD VERSION WITH → ARROWS
+
+============================================================
+
+DOWNLOAD & INSTALL PFSENSE
+============================================================
+
+Download ISO:
+https://www.pfsense.org/download/
+
+Setup VM:
+→ Use 3 network adapters
+1) NAT
+2) Host-only
+3) Host-only
+→ During installation always select NAT interface for WAN
+
+Start installation normally.
+
+============================================================
+2) AFTER INSTALLATION
+
+Default login:
+Username: admin
+Password: pfsense
+
+Open browser on host:
+→ Type: https://<your-pfsense-LAN-IP>
+
+Go through Setup Wizard:
+System → Setup Wizard → Next
+→ Primary DNS = 8.8.8.8
+→ Secondary DNS = 8.8.4.4
+→ Next → Next → Reload → Finish
+→ Click "Update"
+
+============================================================
+3) CONFIGURE CLIENT IP ADDRESSES
+
+Client 1 → 192.168.20.20
+Client 2 → 192.168.20.30
+
+On each client:
+→ Network settings → Assign manual IP
+→ Gateway = pfSense LAN IP
+→ DNS = same pfSense LAN IP or 8.8.8.8
+
+Test:
+Open terminal:
+ping 192.168.20.132 (pfSense LAN IP)
+
+====================================================================
+4) FIREWALL RULE: BLOCK PING FROM CLIENT TO DNS SERVER
+
+Requirement:
+Block ping from clients → DNS server 192.168.72.20
+
+Steps:
+pfSense GUI → Firewall → Rules → LAN → Add (up arrow icon)
+
+Edit rule:
+Action → Block
+Interface → LAN
+Source → Any
+Destination → 192.168.72.20
+Enable Log → check ✔
+Save → Apply Changes
+
+IMPORTANT:
+Rule must be at TOP
+→ Drag rule ↑ to the top
+→ Save → Apply
+
+Check on client:
+ping 192.168.72.20
+It should fail.
+
+====================================================================
+5) INSTALL SQUID (WEB PROXY)
+
+Dashboard → System → Package Manager → Available Packages
+→ Search: squid
+→ Install squid
+
+Configure Squid:
+Services → Squid Proxy Server → General
+→ Enable Squid Proxy ✔
+→ Proxy Interface(s) → LAN + Loopback
+→ Logging Settings → check first box
+
+Local Cache (next tab):
+→ Hard Disk Cache Size = 1024
+Save.
+
+On client browser:
+→ Configure Manual Proxy
+IP = pfSense LAN IP
+Port = default squid port (3128)
+
+====================================================================
+6) INSTALL SQUIDGUARD (WEB FILTER)
+
+Dashboard → System → Package Manager → Available Packages
+→ Search: squidguard
+→ Install
+
+Download blacklist:
+Google → search: pfsense blacklist index of
+Use link:
+https://dsi.ut-capitole.fr/blacklists/download/
+
+Configure:
+Services → SquidGuard Proxy Filter
+General Settings → scroll down
+→ Check "Blacklist"
+→ Paste blacklist URL
+→ Save
+
+Go to Blacklist (header):
+→ Paste URL again
+→ Click Download
+
+Enable SquidGuard:
+General Settings → Enable ✔
+Save → Apply
+
+====================================================================
+7) CREATE TARGET CATEGORY & ACL RULES
+============================================================
+CASE 1: SALES DEPARTMENT
+Allow: shopping, social media
+Block: all other websites
+
+Create user
+Services → Squid Proxy Server → Users → Create
+Add username + password → Save
+
+Create allowlist
+Services → SquidGuard Proxy Filter → Target Categories → Add
+Name: sales-whitelist
+Add domains → Save
+
+Group ACL
+Services → SquidGuard → Group ACL → Add
+Name: sales
+Client Source → 192.168.20.30
+Target Rules → Click + under sales-whitelist → Allow
+Default Access → Deny
+Enable Logging → check
+Save → Apply
+
+Check on client browser.
+
+============================================================
+CASE 2: ACCOUNTS DEPARTMENT
+Allow: bank sites + gov.in
+Block: everything else
+
+Target Category:
+Target Categories → Add
+Name: bankingAndGov
+Regular Expression: bank|gov.in
+Save
+
+Group ACL:
+Group ACL → Add
+Select bankingAndGov under Target Rules → Allow
+Default Access → Deny
+Save → Apply
+
+Check on client.
+
+============================================================
+CASE 3: DEVELOPMENT DEPARTMENT
+Allow: Microsoft, Redhat, Oracle, Docker, IBM
+Block: everything else
+
+Target Category:
+Target Categories → Add
+Name: devsites
+Domain List:
+microsoft.com
+redhat.com
+oracle.com
+docker.com
+ibm.com
+Save
+
+Group ACL:
+Group ACL → Add
+Allow devsites
+Default: Deny
+Save → Apply
+
+Check on client.
+
+============================================================
+CASE 4: OTHER USERS
+Allow: google, wikipedia, news
+Block all other sites
+
+Target Category:
+Name: basic-sites
+Regex: google|wikipedia|news
+Save
+
+Group ACL:
+Allow basic-sites
+Default: Deny
+Save → Apply
+
+Check on client.
+
+============================================================
+CASE 5: ALLOW google, bing, cdac FOR ALL USERS
+
+Target Category:
+Name: allow-basic
+Domains: google.com
+bing.com
+cdac.in
+Save
+
+Group ACL:
+Allow allow-basic
+Default Deny
+Save → Apply
+
+Test on client.
+
+====================================================================
+8) BLOCK ACCESS TO PFSENSE ADMIN PAGE FOR ONE CLIENT
+
+pfSense → Firewall → Rules → LAN → Add
+
+Action → Block
+Source → client IP (example 192.168.20.20)
+Destination → pfSense LAN IP (example 192.168.20.132)
+Port → Any
+Save → Apply
+
+Test:
+On client → Try to open pfSense IP
+It should be blocked.
+
+====================================================================
+9) BLOCK FREE FTP SERVERS
+
+Block these IPs:
+194.108.117.16
+85.188.1.133
+207.210.46.249
+
+pfSense → Firewall → Rules → LAN → Add
+Action → Block
+Destination → enter FTP IP
+Port → 21
+Save → Apply
+
+Repeat for all IPs.
+
+Test from client:
+ftp 194.108.117.16
+Should NOT allow login.
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+========================================================================
+======================
+SNORT 2.9 INSTALLATION 
+
+============================================================
+
+INSTALL REQUIRED PACKAGES
+============================================================
+
+sudo dnf update -y
+sudo dnf install -y epel-release
+sudo yum config-manager --set-enabled crb
+sudo yum update -y
+
+sudo dnf install -y gcc gcc-c++ libnetfilter_queue-devel git flex bison zlib zlib-devel pcre pcre-devel libdnet libdnet-devel libnghttp2 wget xz-devel
+
+cd # go to home directory
+
+============================================================
+2) DOWNLOAD AND INSTALL SNORT PACKAGE
+
+wget https://www.snort.org/downloads/snort/snort-2.9.20-1.f35.x86_64.rpm
+
+sudo yum localinstall snort-2.9.20-1.f35.x86_64.rpm -y
+
+Create library link:
+sudo ln -s /usr/lib64/libdnet.so.1.0.1 /usr/lib64/libdnet.1
+
+============================================================
+3) VERIFY SNORT INSTALLATION
+
+sudo snort -V
+
+============================================================
+4) CONFIGURE SNORT
+
+Open config:
+sudo vi /etc/snort/snort.conf
+
+----- EDIT THE FOLLOWING LINES -----
+
+Set HOME_NET:
+ipvar HOME_NET network-add/24
+
+Set EXTERNAL_NET:
+ipvar EXTERNAL_NET !$HOME_NET
+
+----- SET RULE PATHS (UPDATED) -----
+
+var RULE_PATH /etc/snort/rules
+var SO_RULE_PATH /etc/snort/rules/so_rules
+var PREPROC_RULE_PATH /etc/snort/rules/preproc_rules
+
+var WHITE_LIST_PATH /etc/snort/rules
+var BLACK_LIST_PATH /etc/snort/rules
+
+----- ENABLE LOGGING -----
+
+output unified2: filename snort.log, limit 128
+
+----- AT THE END OF FILE ADD -----
+
+include $RULE_PATH/local.rules
+
+Save and exit
+
+============================================================
+5) CREATE RULE DIRECTORIES & FILES
+
+sudo touch /etc/snort/rules/white_list.rules
+sudo touch /etc/snort/rules/black_list.rules
+sudo touch /etc/snort/rules/local.rules
+
+Create dynamic rules directory:
+sudo mkdir /usr/local/lib/snort_dynamicrules
+sudo chown -R snort:snort /usr/local/lib/snort_dynamicrules
+
+============================================================
+6) TEST SNORT CONFIGURATION
+
+sudo snort -T -c /etc/snort/snort.conf
+
+If output ends with:
+Snort successfully validated the configuration!
+Then Snort is installed correctly.
+
+============================================================
+7) CREATE TEST RULE
+
+sudo vi /etc/snort/rules/local.rules
+
+Add:
+alert icmp $HOME_NET any -> $EXTERNAL_NET any (msg:"Ping from LAN"; sid:1000001; rev:001;)
+
+Save.
+
+============================================================
+8) RUN SNORT IN CONSOLE MODE
+
+sudo snort -A console -i ens160 -c /etc/snort/snort.conf -q
+
+Open another terminal:
+ping 8.8.8.8
+
+Stop ping (CTRL+C)
+Check Snort console for alerts
+Stop Snort (CTRL+C)
+
+============================================================
+9) CREATE SNORT SYSTEMD SERVICE
+
+sudo vi /etc/systemd/system/snort.service
+
+Paste:
+
+[Unit]
+Description=Snort 2.9 IDS/IPS
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/sbin/snort -A fast -D -q -c /etc/snort/snort.conf -i ens160
+ExecStop=/bin/kill -SIGINT $MAINPID
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
+Save and exit
+
+Reload services:
+sudo systemctl daemon-reload
+
+Start Snort:
+sudo systemctl start snort
+sudo systemctl status snort
+
+Enable service:
+sudo systemctl enable snort
+
+============================================================
+10) IMPORTANT NOTE
+
+Snort may require SELinux disabled:
+sudo setenforce 0
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================================
+GEOIP BLOCKING (xtables-addons)
+
+
+============================================================
+
+UBUNTU – INSTALL & CONFIGURE GEOIP BLOCKER
+============================================================
+
+1.1) Update system
+sudo apt update -y
+
+1.2) Disable UFW (must be off)
+sudo systemctl stop ufw
+sudo systemctl disable ufw
+sudo systemctl mask ufw
+
+1.3) Install dependencies
+sudo apt install gcc make automake pkg-config libxtables-dev linux-headers-generic unzip -y
+sudo apt install libnet-cidr-lite-perl libnet-cidr-perl libtext-csv-xs-perl -y
+
+1.4) Download xtables-addons
+cd /tmp
+wget -c https://inai.de/files/xtables-addons/xtables-addons-3.27.tar.xz
+
+tar -xvf xtables-addons-3.27.tar.xz
+cd xtables-addons-3.27
+
+1.5) Edit Kbuild (enable only GeoIP)
+vi extensions/Kbuild
+
+put # for all except geoip
+
+1.6) Compile & install module
+sudo ./configure
+sudo make
+sudo make install
+
+1.7) Check SecureBoot
+sudo mokutil --sb-state
+
+1.8) Load module
+sudo depmod -a
+sudo modprobe xt_geoip
+
+1.9) Prepare GeoIP directory
+sudo mkdir /usr/share/xt_geoip
+cd /usr/share/xt_geoip/
+
+1.10) Download MaxMind GeoLite2 country DB
+sudo wget -q -O GeoLite2-Country-CSV.zip "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country-CSV&license_key=
+<your-maxmind-license>&suffix=zip"
+sudo unzip GeoLite2-Country-CSV.zip
+
+Copy IPv4 database file:
+sudo cp GeoLite2-Country-CSV*/GeoLite2-Country-Blocks-IPv4.csv /usr/share/xt_geoip/
+
+1.11) Download DB-IP free country data (optional)
+sudo wget -O dbip-country-lite.csv.gz "https://download.db-ip.com/free/dbip-country-lite-$(date
+ +'%Y-%m').csv.gz"
+sudo gunzip dbip-country-lite.csv.gz
+
+1.12) Build GeoIP DB
+sudo /tmp/xtables-addons-3.27/geoip/xt_geoip_build -D /usr/share/xt_geoip/ GeoLite2-Country-Blocks-IPv4.csv
+
+============================================================
+2) RHEL / CENTOS / ROCKY – INSTALL & CONFIGURE GEOIP BLOCKER
+
+2.1) Enable EPEL
+sudo yum install epel-release -y
+
+2.2) Update system
+sudo yum update -y
+
+2.3) Install dependencies
+sudo yum install gcc gcc-c++ kernel-modules kernel-core kernel-headers kernel-devel perl-Net-CIDR-Lite perl-Text-CSV_XS elfutils-libelf-devel wget unzip tar mokutil -y
+
+2.4) Download xtables-addons
+cd /tmp
+wget -c https://inai.de/files/xtables-addons/xtables-addons-3.27.tar.xz
+
+tar -xvf xtables-addons-3.27.tar.xz
+cd xtables-addons-3.27
+
+2.5) Edit Kbuild
+vi extensions/Kbuild
+
+enable only GeoIP
+
+2.6) Compile and install
+sudo ./configure
+sudo make
+sudo make install
+
+2.7) Check SecureBoot
+sudo mokutil --sb-state
+
+2.8) Load module
+sudo modprobe xt_geoip
+
+2.9) Create directory
+sudo mkdir /usr/share/xt_geoip
+cd /usr/share/xt_geoip/
+
+2.10) Download GeoLite2 DB
+sudo wget -q -O GeoLite2-Country-CSV.zip "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country-CSV&license_key=
+<your-maxmind-license>&suffix=zip"
+sudo unzip GeoLite2-Country-CSV.zip
+
+Copy data:
+sudo cp GeoLite2-Country-CSV*/GeoLite2-Country-Blocks-IPv4.csv /usr/share/xt_geoip/
+
+2.11) Download DB-IP lite DB
+sudo wget -O dbip-country-lite.csv.gz "https://download.db-ip.com/free/dbip-country-lite-$(date
+ +'%Y-%m').csv.gz"
+sudo gunzip dbip-country-lite.csv.gz
+
+2.12) Build GeoIP DB
+sudo /tmp/xtables-addons-3.27/geoip/xt_geoip_build -D /usr/share/xt_geoip/ GeoLite2-Country-Blocks-IPv4.csv
+
+============================================================
+3) ADD IPTABLES GEOIP BLOCKING RULE
+
+Example rule:
+iptables -A INPUT -m geoip ! --src-cc IN -p tcp -m multiport --dport 80,110,143,443,465,587,993,995,7071 -j DROP
+
+Meaning:
+This blocks traffic from ALL COUNTRIES except India.
+
+============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================================
+OSSEC SERVER + CLIENT SETUP
+============================================================
+
+SERVER INSTALLATION
+============================================================
+
+Install required packages:
+sudo yum install zlib-devel pcre2-devel make gcc sqlite-devel openssl-devel libevent-devel systemd-devel automake autoconf epel-release wget tar unzip -y
+
+Install Remi repo + PHP:
+sudo yum install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+
+sudo yum module enable php:remi-7.4 -y
+sudo yum install -y php php-cli php-common php-fpm
+
+Install OSSEC Server (Atomic):
+wget -q -O - https://updates.atomicorp.com/installers/atomic
+ | sh
+yum install ossec-hids ossec-hids-server
+
+============================================================
+2) SERVER CONFIGURATION
+
+Edit config:
+nano /var/ossec/etc/ossec.conf
+
+Go to line 81 and ensure:
+<frequency>79200</frequency>
+<alert_new_files>yes</alert_new_files>
+
+Modify directories:
+<directories report_changes="yes" realtime="yes" check_all="yes">/etc,/usr/bin,/usr/sbin</directories>
+<directories report_changes="yes" realtime="yes" check_all="yes">/bin,/sbin,/var/www</directories>
+
+Save.
+
+Add rule:
+nano /var/ossec/rules/local_rules.xml
+
+Add before “rules to ignore”:
+<rule id="554" level="7" overwrite="yes">
+<category>ossec</category>
+<decoded_as>syscheck_new_entry</decoded_as>
+<description>File added to the system.</description>
+<group>syscheck,</group>
+</rule>
+
+Save.
+
+Start server:
+sudo /var/ossec/bin/ossec-control start
+sudo /var/ossec/bin/ossec-control restart
+sudo /var/ossec/bin/ossec-control status
+
+============================================================
+3) INSTALL WEB INTERFACE
+
+Install httpd:
+dnf install httpd -y
+
+Download UI:
+wget https://github.com/ossec/ossec-wui/archive/master.zip
+
+unzip master.zip
+sudo mv ossec-wui-master /var/www/html/ossec
+cd /var/www/html/ossec
+sudo ./setup.sh
+(set username + password, web user = apache)
+
+Start Apache:
+systemctl start httpd
+systemctl enable httpd
+
+Open firewall:
+firewall-cmd --add-service=http --permanent
+firewall-cmd --reload
+
+Visit:
+http://SERVER-IP/ossec
+
+============================================================
+4) AGENT INSTALLATION
+
+Install Atomic repo again:
+wget -q -O - https://updates.atomicorp.com/installers/atomic
+ | sh
+
+Install agent:
+yum install ossec-hids ossec-hids-agent
+
+Edit agent config:
+nano /var/ossec/etc/ossec.conf
+
+Add server IP:
+<server-ip>SERVER-IP-HERE</server-ip>
+
+Save.
+
+============================================================
+5) LINK AGENT WITH SERVER
+
+On Server:
+sudo /var/ossec/bin/manage_agents
+
+Press A → Add agent
+Name = client1
+IP = CLIENT-IP
+ID = 001
+Confirm = y
+
+Press E → Extract key for agent 001
+Copy the key.
+
+On Client:
+sudo /var/ossec/bin/manage_agents
+
+Press I → Import key
+Paste the key
+Press y → confirm
+Press Q → quit
+
+============================================================
+6) START CLIENT + VERIFY
+
+Start agent:
+sudo /var/ossec/bin/ossec-control start
+
+Wait 2–3 minutes.
+
+Check OSSEC Web UI:
+http://SERVER-IP/ossec
+
+Client should appear under “Agents”.
+
+If not, restart server:
+sudo systemctl restart ossec
+
+============================================================
+7) ENABLE OSSEC AS A SERVICE (OPTIONAL)
+
+Create file:
+nano /usr/lib/systemd/system/ossec.service
+
+Paste:
+[Unit]
+Description=OSSEC service
+[Service]
+Type=forking
+ExecStart=/var/ossec/bin/ossec-control start
+ExecStop=/var/ossec/bin/ossec-control stop
+ExecRestart=/var/ossec/bin/ossec-control restart
+[Install]
+WantedBy=multi-user.target
+
+Install chkconfig:
+yum install chkconfig -y
+
+Enable:
+systemctl start ossec
+systemctl enable ossec
+
+====================================================================
+FINAL FLOW SUMMARY (SUPER SIMPLE)
+
+SERVER:
+
+Install OSSEC server
+
+Edit ossec.conf
+
+Add rule
+
+Start server
+
+Install Web UI (optional)
+
+CLIENT:
+
+Install OSSEC agent
+
+Add server IP in ossec.conf
+
+On server → add agent + extract key
+
+On client → import key
+
+Start agent
+
+Check in dashboard
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+==========================================================================================
+====================================================================
+REVERSE PROXY: NGINX + 2 APACHE SERVERS  (1 SERVER, 2 CLIENT LAB)
+
+===========================
+
+LAB SETUP – 3 VMs (1 SERVER + 2 CLIENTS)
+===========================
+
+ALL machines in NAT Network Mode
+ALL machines → SELINUX disabled or permissive
+
+VM1 → Apache Server 1
+VM2 → Apache Server 2
+VM3 → Nginx Server (Front-End for clients)
+
+Update all VMs:
+sudo yum update -y
+
+====================================================================
+APACHE SETUP (CLIENT 1 + CLIENT 2)
+===========================
+2) INSTALL APACHE ON CLIENT 1 & CLIENT 2
+
+Install:
+sudo yum install httpd -y
+
+Ubuntu → sudo apt install apache2 -y
+
+Create webpage:
+sudo vi /var/www/html/index.html
+
+Example content for Client 1:
+
+<h1>Apache Server 1</h1> Served by: <IP-of-Apache-1>
+
+Example content for Client 2:
+
+<h1>Apache Server 2</h1> Served by: <IP-of-Apache-2>
+
+Start Apache:
+sudo systemctl start httpd
+sudo systemctl enable httpd
+
+Firewall open:
+sudo firewall-cmd --add-service=http
+sudo firewall-cmd --add-service=http --permanent
+
+====================================================================
+NGINX SETUP (MAIN SERVER)
+===========================
+3) INSTALL NGINX ON FRONT-END SERVER
+
+Install:
+sudo yum install nginx -y
+
+Start:
+sudo systemctl start nginx
+sudo systemctl enable nginx
+
+Firewall:
+sudo firewall-cmd --add-service=http
+sudo firewall-cmd --add-service=http --permanent
+
+===========================
+4) TEST NGINX DEFAULT PAGE
+
+On your Windows browser:
+http://<nginx-server-IP>
+
+You should see default Nginx page.
+
+Now Nginx will be configured as:
+
+Reverse Proxy → route / to Apache1, /courses to Apache2
+
+Load Balancer → distribute to both Apache servers
+
+====================================================================
+NGINX AS REVERSE PROXY
+===========================
+5) BACKUP ORIGINAL CONFIG
+
+sudo cp /etc/nginx/nginx.conf ~
+
+===========================
+6) EDIT CONFIG FILE
+
+sudo vi /etc/nginx/nginx.conf
+
+Inside server { } comment these lines:
+
+#listen [::]:80;
+#server_name _;
+#root /usr/share/nginx/html;
+
+Make sure:
+include /etc/nginx/default.d/*.conf;
+
+Now add:
+
+location / {
+proxy_pass http://<Apache-1-IP>/;
+proxy_buffering off;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /courses {
+proxy_pass http://<Apache-2-IP>/;
+proxy_buffering off;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+Restart nginx:
+sudo systemctl restart nginx
+
+===========================
+7) TEST REVERSE PROXY
+
+On Windows browser:
+
+Test Apache 1:
+http://nginx-IP/
+
+→ Should show Apache Server 1 page
+
+Test Apache 2:
+http://nginx-IP/courses
+
+→ Should show Apache Server 2 page
+
+Reverse Proxy working ✔️
+
+####################################################################
+####################################################################
+
+====================================================================
+NGINX AS LOAD BALANCER
+===========================
+8) RESTORE ORIGINAL CONFIG
+
+sudo cp -f ~/nginx.conf /etc/nginx/
+
+===========================
+9) EDIT nginx.conf FOR LOAD BALANCING
+
+sudo vi /etc/nginx/nginx.conf
+
+Comment again:
+#listen [::]:80;
+#server_name _;
+#root /usr/share/nginx/html;
+
+Include line:
+include /etc/nginx/default.d/*.conf;
+
+Add upstream + server block:
+
+upstream backend {
+server <Apache-1-IP>;
+server <Apache-2-IP>;
+}
+
+server {
+listen 80;
+location / {
+proxy_pass http://backend/
+;
+}
+}
+
+===========================
+10) RESTART NGINX
+
+sudo systemctl restart nginx
+
+===========================
+11) TEST LOAD BALANCER
+
+Open browser:
+http://nginx-IP/
+
+Results:
+
+1st refresh → Apache 1 page
+
+2nd refresh → Apache 2 page
+
+3rd refresh → Apache 1
+
+and so on…
+
+Nginx defaults to Round Robin Load Balancing.
+
+====================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================================
+OPENVPN SERVER SETUP
+
+===========================
+
+LAB REQUIREMENTS
+===========================
+
+You need 3 VMs:
+
+OpenVPN Server
+
+2 Network Cards
+• NAT
+• Host-Only
+
+Hostname: openvpnserver
+
+VPN Client (Remote Client)
+
+1 Network Card
+• NAT
+
+Hostname: client1
+
+LAN Machine
+
+1 Network Card
+• Host-Only
+
+Create user admin on all machines and give sudo access.
+Run on all VMs:
+sudo yum update -y
+
+Set correct timezone everywhere.
+
+===========================
+2) DISABLE SELINUX
+
+Edit config:
+sudo vi /etc/selinux/config
+Set:
+SELINUX=disabled
+
+Apply temporary permissive mode:
+sudo setenforce 0
+
+===========================
+3) ENABLE IP FORWARDING
+
+Temporary:
+echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward
+
+Permanent:
+sudo vi /etc/sysctl.conf
+Add:
+net.ipv4.ip_forward = 1
+
+===========================
+4) INSTALL REQUIRED PACKAGES
+
+sudo dnf install epel-release -y
+sudo dnf install openvpn wget tar -y
+
+Go to OpenVPN directory:
+cd /etc/openvpn
+
+Download EasyRSA:
+sudo wget https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.6/EasyRSA-unix-v3.0.6.tgz
+
+Extract:
+sudo tar xvzf EasyRSA-unix-v3.0.6.tgz
+
+Rename:
+sudo mv EasyRSA-v3.0.6 easy-rsa
+
+Enter folder:
+cd easy-rsa
+
+===========================
+5) CREATE vars FILE
+
+vi vars
+
+Paste:
+set_var EASYRSA "$PWD"
+set_var EASYRSA_PKI "$EASYRSA/pki"
+set_var EASYRSA_DN "cn_only"
+set_var EASYRSA_REQ_COUNTRY "IN"
+set_var EASYRSA_REQ_PROVINCE "Maharastra"
+set_var EASYRSA_REQ_CITY "Pune"
+set_var EASYRSA_REQ_ORG "Demo Labs"
+set_var EASYRSA_REQ_EMAIL ""
+set_var EASYRSA_REQ_OU "Demo Labs CA"
+set_var EASYRSA_KEY_SIZE 2048
+set_var EASYRSA_ALGO rsa
+set_var EASYRSA_CA_EXPIRE 7500
+set_var EASYRSA_CERT_EXPIRE 365
+set_var EASYRSA_NS_SUPPORT "no"
+set_var EASYRSA_NS_COMMENT "Demo Labs"
+set_var EASYRSA_EXT_DIR "$EASYRSA/x509-types"
+set_var EASYRSA_SSL_CONF "$EASYRSA/openssl-easyrsa.cnf"
+set_var EASYRSA_DIGEST "sha256"
+
+===========================
+6) INITIALIZE PKI & BUILD CA
+
+Init PKI:
+sudo ./easyrsa init-pki
+
+Build CA:
+sudo ./easyrsa build-ca
+
+Enter password
+Common Name (example): demo-ca
+
+===========================
+7) GENERATE SERVER CERTIFICATES
+
+Request:
+sudo ./easyrsa gen-req openvpnserver nopass
+Press Enter at hostname.
+
+Sign:
+sudo ./easyrsa sign-req server openvpnserver
+Choose: yes
+Enter CA password.
+
+Generate DH:
+sudo ./easyrsa gen-dh
+
+Copy certs to server directory:
+sudo cp pki/ca.crt /etc/openvpn/server
+sudo cp pki/dh.pem /etc/openvpn/server
+sudo cp pki/private/openvpnserver.key /etc/openvpn/server
+sudo cp pki/issued/openvpnserver.crt /etc/openvpn/server
+
+===========================
+8) GENERATE CLIENT CERTIFICATES
+
+Request:
+sudo ./easyrsa gen-req client1 nopass
+Press Enter.
+
+Sign:
+sudo ./easyrsa sign-req client client1
+
+Copy client certs:
+sudo cp pki/ca.crt /etc/openvpn/client
+sudo cp pki/issued/client1.crt /etc/openvpn/client
+sudo cp pki/private/client1.key /etc/openvpn/client
+
+===========================
+9) CREATE server.conf FILE
+
+sudo vi /etc/openvpn/server/server.conf
+
+Paste:
+
+port 1194
+proto udp
+dev tun
+
+ca /etc/openvpn/server/ca.crt
+cert /etc/openvpn/server/openvpnserver.crt
+key /etc/openvpn/server/openvpnserver.key
+dh /etc/openvpn/server/dh.pem
+
+server 10.8.0.0 255.255.255.0
+
+push "route 192.168.237.0 255.255.255.0"
+
+duplicate-cn
+cipher AES-256-CBC
+tls-version-min 1.2
+auth SHA512
+auth-nocache
+
+keepalive 20 60
+persist-key
+persist-tun
+compress lz4
+
+daemon
+user nobody
+group nobody
+
+log-append /var/log/openvpn.log
+verb 3
+
+===========================
+10) START OPENVPN SERVER
+
+sudo systemctl start openvpn-server@server
+sudo systemctl status openvpn-server@server
+sudo systemctl enable openvpn-server@server
+
+===========================
+11) CREATE CLIENT .ovpn FILE
+
+sudo vi /etc/openvpn/client/client1.ovpn
+
+Paste:
+
+client
+dev tun
+proto udp
+remote vpn-server-ip 1194
+
+ca ca.crt
+cert client1.crt
+key client1.key
+
+cipher AES-256-CBC
+auth SHA512
+auth-nocache
+
+tls-version-min 1.2
+compress lz4
+
+nobind
+persist-key
+persist-tun
+
+verb 3
+
+===========================
+12) FIREWALL RULES
+
+sudo firewall-cmd --permanent --add-service=openvpn
+sudo firewall-cmd --permanent --zone=trusted --add-service=openvpn
+sudo firewall-cmd --permanent --zone=trusted --change-interface=tun0
+
+sudo firewall-cmd --add-masquerade
+sudo firewall-cmd --permanent --add-masquerade
+
+sudo firewall-cmd --permanent --direct --passthrough ipv4 -t nat -A POSTROUTING -s 10.8.0.0/24 -o ens160 -j MASQUERADE
+
+sudo firewall-cmd --reload
+
+===========================
+13) COPY CLIENT FILES TO CLIENT MACHINE
+
+sudo scp /etc/openvpn/client/. admin@vpn-client-ip:/home/admin
+
+===========================
+14) ON CLIENT MACHINE
+
+Install:
+sudo dnf install epel-release -y
+sudo dnf install openvpn -y
+
+Disable SELinux:
+sudo setenforce 0
+
+Copy files:
+sudo cp /home/admin/ca.crt /etc/openvpn/client
+sudo cp /home/admin/client1.crt /etc/openvpn/client
+sudo cp /home/admin/client1.key /etc/openvpn/client
+
+Edit .ovpn and set server IP.
+
+===========================
+15) CONNECT TO VPN
+
+Start VPN:
+sudo openvpn --config client1.ovpn
+
+Open another terminal:
+ip a
+
+Test:
+ping <LAN-IP>
+ssh <LAN-IP>
+
+Disconnect:
+Ctrl + C
+
+====================================================================
